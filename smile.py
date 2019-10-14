@@ -8,7 +8,6 @@ from ib_insync import *
 import numpy as np
 import math
 
-
 class Cache:
     instance = None
 
@@ -20,6 +19,7 @@ class Cache:
 
     def __init__(self):
         self.cache_path = "/Users/paulcao/option_chain_pickle.b"
+        self.expiry_timedelta = datetime.timedelta(weeks=1)
         self.cache = pickle.load(open(self.cache_path, "rb")) if os.path.isfile(self.cache_path) else {}
 
     def commit(self):
@@ -32,7 +32,7 @@ class Cache:
     def getChain(self, contract, expiry):
         key = Cache.keyForChain(contract, expiry)
         res = self.cache[key] if key in self.cache else None
-        return res["result"] if (res != None) and (res["datetime"] > datetime.datetime.now() - expiry_timedelta) else None
+        return res["result"] if (res != None) and (res["datetime"] > datetime.datetime.now() - self.expiry_timedelta) else None
 
     def existsChain(self, contract, expiry):
         return self.getChain(contract, expiry) != None and len(self.getChain(contract, expiry)) > 0
@@ -79,22 +79,19 @@ class Cache:
 
 class Chain:
 
-    def __init__(self, expiry, contract, underlying_price):
+    def __init__(self, expiry, contract, underlying_price, upper=1.50, lower=0.50):
         cache = Cache.singleton()
 
-        #if cache.existsChain(contract, expiry):
-        #    self.chain = cache.getChain(contract, expiry)
-        #else:
-        chain = Connection().reqContractDetails(Option(contract.symbol, expiry, exchange="SMART", currency="USD"))
-        cache.addChain(contract, expiry, chain)
-        self.chain = chain
+        if cache.existsChain(contract, expiry):
+            self.chain = cache.getChain(contract, expiry)
+        else:
+            chain = Connection().reqContractDetails(Option(contract.symbol, expiry, exchange="SMART", currency="USD"))
+            cache.addChain(contract, expiry, chain)
+            self.chain = chain
 
-        underlying_price = underlying_price
-        upper_price, lower_price = 1.00 * underlying_price, 0.60 * underlying_price
-
-        #contract_details = filter(lambda d: lower_price < d.contract.strike < upper_price and
-        #                                    d.contract.right == 'P', self.chain)
-        self.chain = map(lambda c: c.contract, self.chain)
+        upper_price, lower_price = upper * underlying_price, lower * underlying_price
+        contract_details = filter(lambda d: lower_price < d.contract.strike < upper_price, self.chain)
+        self.chain = map(lambda c: c.contract, contract_details)
 
     def __getattr__(self, name):
         return getattr(self.chain, name)
@@ -157,10 +154,9 @@ class GreekCalculation:
 class Smile:
 
     def __init__(self, expiry, contract, underlying_price):
-        #chain = list(Chain(expiry, contract, underlying_price))
         option_tickers = Connection().reqTickers(*list(Chain(expiry, contract, underlying_price)))
         self.smile = map(lambda c: GreekCalculation(c.contract, underlying_price, price=c.marketPrice(),
-                                                    bid=c.bid, ask=c.ask), option_tickers)
+                                                         bid=c.bid, ask=c.ask), option_tickers)
 
     def __getattr__(self, name):
         return getattr(self.smile, name)
@@ -171,3 +167,8 @@ class Smile:
     def __iter__(self):
         return self
 
+
+class SmilePair:
+
+    def __init__(self, unlevered_smile, levered_smile):
+        self

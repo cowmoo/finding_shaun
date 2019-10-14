@@ -5,6 +5,7 @@ class Connection:
     class __Singleton:
         def __init__(self):
             self.ib = IB()
+            self.ib.client.MaxRequests = 40
             self.ib.connect("127.0.0.1", 4001, clientId=1)
             self.qualifiedContracts = {}
 
