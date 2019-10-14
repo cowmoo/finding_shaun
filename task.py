@@ -8,14 +8,15 @@ import math
 import cvxpy as cp
 import cvxpy.atoms.affine.sum as cx
 import datetime
+import os
 
 
 async def run_scanner():
 
-    pairs = [ETFPair(1, 3, "GDX", "NUGT", n_expiry=1, call=True),
-             ETFPair(1, 3, "XLF", "FAS", n_expiry=1, call=True),
-             ETFPair(1, 3, "IWM", "TNA", n_expiry=1, call=True),
-             ETFPair(2, 3, "VXX", "UVXY", n_expiry=1, call=True)]
+    pairs = [ETFPair(1, 3, "GDX", "NUGT", n_expiry=1, call=True)]
+             #ETFPair(1, 3, "XLF", "FAS", n_expiry=1, call=True),
+             #ETFPair(1, 3, "IWM", "TNA", n_expiry=1, call=True),
+             #ETFPair(2, 3, "VXX", "UVXY", n_expiry=1, call=True)]
     for pair in pairs: await pair.solve()
 
     def display_spread(spread):
@@ -35,8 +36,34 @@ async def run_scanner():
         print("Levered Spot: " + str(spread.prices[1].marketPrice()) + "; Pct. Change to Touch: " + str(levered_spot_change))
         print("\n")
 
-    for pair in list(sorted(pairs, key=lambda p: p.spread, reverse=True)):
+    pairs = list(sorted(pairs, key=lambda p: p.spread, reverse=True))
+    for pair in pairs:
         display_spread(pair)
+
+    pickle_file = "arb_orders.pickle"
+    planned_trades = {"long": Position(account=None, avgCost=None, contract=pairs[0].unlevered_contract,
+                                       position=pairs[0].unlevered_real_ratio),
+                      "short": Position(account=None, avgCost=None, contract=pairs[0].levered_contract,
+                                        position=pairs[0].levered_real_ratio)}
+
+    pickle.dump(planned_trades, open(pickle_file, "wb"))
+    print("Planned trades saved to " + pickle_file)
+
+
+async def run_order():
+    pickle_file = "arb_orders.pickle"
+    orders = pickle.load(open(pickle_file, "rb")) if os.path.isfile(pickle_file) else {}
+    conn = Connection()
+    tickers = conn.reqTickers(*[orders["long"].contract.contract, orders["short"].contract.contract])
+
+    long_trade = conn.placeOrder(orders["long"].contract.contract, LimitOrder("BUY", orders["long"].position, tickers[0].marketPrice()))
+    short_trade = conn.placeOrder(orders["short"].contract.contract, LimitOrder("SELL", orders["short"].position, tickers[1].marketPrice()))
+
+    print("Submitting order for " + str(long_trade))
+    print("Submitting order for " + str(short_trade))
+
+    while long_trade.isActive() and short_trade.isActive():
+        conn.waitOnUpdate()
 
 
 def generate_expiry(n):
@@ -133,6 +160,7 @@ class ArbSmile:
 if __name__ == "__main__":
     nest_asyncio.apply()
     loop = asyncio.get_event_loop()
-    futures = [run_scanner()]
+    #futures = [run_scanner()]
+    futures = [run_order()]
     loop.run_until_complete(asyncio.wait(futures))
     loop.close()
